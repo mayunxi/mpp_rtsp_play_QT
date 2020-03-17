@@ -72,7 +72,7 @@ AuthType auth_type = UNK;
 int rtspSocket = -1;
 int rtspTimeout = RTSP_TIMEOUT;
 // RTSP control sequeue number
-int CSeq;
+int CSeq=2;
 // Use only UDP protocol
 int clientPort[2] = { 37477, 37478 };
 int serverPort[2];
@@ -117,7 +117,6 @@ int RtspProtocolUtil_init(const string url)
 #define RTSP_URL_PREFIX "rtsp://"
 
     size_t pos = 0;
-    CSeq = 1;
     // Parse URL, get configuration
     // the url MUST start with "rtsp://"
     if (url.find(RTSP_URL_PREFIX,0) < 0) {
@@ -143,7 +142,7 @@ int RtspProtocolUtil_init(const string url)
         string tmp_passwd = usr_info.substr(pos+1);
         memcpy(usr,tmp_usr.c_str(),tmp_usr.length());
         memcpy(passwd,tmp_passwd.c_str(),tmp_passwd.length());
-
+        printf("usr:%s,passwd:%s\n",usr,passwd);
         //ip
         pos = url.find_first_of("/",a);
         ip = url.substr(a+1,pos-a-1);
@@ -179,7 +178,6 @@ int RtspProtocolUtil_init(const string url)
 
 static int rtsp_init()
 {
-    CSeq = 1;
     struct hostent *hp;
     struct sockaddr_in server;
     // Rtp content buffer
@@ -227,14 +225,19 @@ static int rtsp_init()
     }
     // DESCRIBE
     int res = describe(rtspTimeout);
-    if (res < 0) {
+    if (res < 0) {                   //if error
         close(rtspSocket);
         rtspSocket = -1;
         return -1;
     }
-    else if (res!=NO)
+    else if (res!=NO)  //need Authenticate
     {
-        describe(rtspTimeout);
+         res = describe(rtspTimeout);
+    }
+    if (res < 0) {                   //if error
+        close(rtspSocket);
+        rtspSocket = -1;
+        return -1;
     }
     // SETUP
     if (setup(rtspTimeout)) {
@@ -387,6 +390,7 @@ static int options(int ms)
 #define OPTIONS_CMD "OPTIONS %s " RTSP_VERSIION "\r\nCSeq: %d\r\n" RTSP_USERAGENT "\r\n"
     char cmd[1024];
     int size = snprintf(cmd, sizeof(cmd), OPTIONS_CMD, _url, CSeq);
+    printf("requst:%s\n",cmd);
     _send_request(cmd, size);
     // Waiting for response
     char resp[2048];
@@ -394,7 +398,7 @@ static int options(int ms)
         return -1;
     }
     // Parse response
-
+    printf("response:%s\n",resp);
     CSeq++;
     return 0;
 }
@@ -409,6 +413,7 @@ int describe(int ms)
      */
 #define DESCRIBE_CMD "DESCRIBE %s " RTSP_VERSIION "\r\n""CSeq: %d\r\n" RTSP_USERAGENT "Accept: application/sdp\r\n\r\n"
     char cmd[1024];
+    memset(cmd,0,1024);
     int size;
     if (auth_type == UNK)
     {
@@ -420,52 +425,60 @@ int describe(int ms)
     }
     else if (auth_type == Digest)
     {
-        string s_respone = MakeMd5DigestResp(realm,"public_method",_url,nonce,usr,passwd);
+        //a correct response -->>> Authorization: Digest username="admin", realm="IP Camera(C2358)", nonce="e660f15fe14cf92fb106179f67140d24", uri="rtsp://192.168.1.189:554/h264/main/av_stream", response="c2f4ed744e7f8d31d37420bf3efeb808"\r\n
+        string s_respone = MakeMd5DigestResp(realm,"DESCRIBE",_url,nonce,usr,passwd);
         int len = s_respone.length();
-        string s_cmd = "DESCRIBE "+string(_url)+" "+RTSP_VERSIION+"\r\n""CSeq: "+to_string(CSeq)+"\r\n"+"Authenticate:Digest username=\""+usr
+        string s_cmd = "DESCRIBE "+string(_url)+" "+RTSP_VERSIION+"\r\n""CSeq: "+to_string(CSeq)+"\r\n"+"Authorization:Digest username=\""+usr
                 +"\",realm=\""+realm
                 +"\",nonce=\""+nonce
                 +"\",uri=\""+_url+"\","
                 +"response=\""+s_respone+"\"\n"
-                +RTSP_USERAGENT+"Accept: application/sdp\r\n\r\n";
-        memset(cmd,0,1024);
+                +RTSP_USERAGENT+"Accept:application/sdp\r\n\r\n";
         memcpy(cmd,s_cmd.c_str(),s_cmd.length());
+        size=s_cmd.length();
+        printf("Digest author requst cmd len:%d\n",s_cmd.length());
     }
     // Send command the RTSP server
-    printf("%s\n",cmd);
-    _send_request(cmd, size);
+    printf("requst:%s\n",cmd);
+    _send_request(cmd, size);  //tips:size must
     // Waiting for response
     char resp[2048];
+    memset(resp,0,2048);
     size_t pos;
-    if (_wait_response(ms, resp, sizeof(resp))) {
+    if (_wait_response(ms, resp, sizeof(resp))) {              //if response err
         string s_resp = resp;
-        if (pos = s_resp.find("WWW-Authenticate:Digest") >=0 )
+        if (s_resp.size() > 0)
         {
-            split(s_resp,realm,"realm=",",",64);
-            split(s_resp,nonce,"nonce=",",",64);
-            auth_type = Digest;
+            if (pos = s_resp.find("WWW-Authenticate:Digest") >=0 )
+            {
+                split(s_resp,realm,"realm=",",",64);
+                split(s_resp,nonce,"nonce=",",",64);
+                //memcpy(nonce,"e660f15fe14cf92fb106179f67140d24",strlen("e660f15fe14cf92fb106179f67140d24"));
+                auth_type = Digest;
 
+            }
+            else if (pos = s_resp.find("WWW-Authenticate:Basic") >=0 )
+            {
+                split(s_resp,realm,"realm=",",",64);
+                auth_type = Basic;
+            }
+            else
+            {
+                return -1;
+            }
         }
-        else if (pos = s_resp.find("WWW-Authenticate:Basic") >=0 )
-        {
-            split(s_resp,realm,"realm=",",",64);
-            auth_type = Basic;
-        }
-        else if ( s_resp.find("RTSP/1.0 200") >=0)
-        {
-            auth_type = NO;
-        }
-        else
-        {
-            return -1;
-        }
-        printf("%s\n",resp);
+
     }
-    // Parse response
-    //if (auth_type == NO)
+    else
     {
-        _parse_sdp(resp);
+        string s_resp = resp;
+        if ( s_resp.find("RTSP/1.0 200") >=0)
+            auth_type = NO;
     }
+    printf("response:%s\n",resp);
+    // Parse response
+
+    _parse_sdp(resp);
 
     CSeq++;
 
@@ -563,7 +576,7 @@ static int _setup_interleaved(int ms)
     char cmd[1024];
     int size = snprintf(cmd, sizeof(cmd), SETUPI_CMD_I, control, CSeq);
     _send_request(cmd, size);
-
+    printf("setup requset:%s\n",cmd);
     // Waiting for response
     char resp[2048];
     if (_wait_response(ms, resp, sizeof(resp))) {
@@ -694,78 +707,15 @@ static int _parse_sdp(char const* resp)
     // a=control:rtsp://192.168.199.30:554/h264/ch1/main/av_stream/trackID=1
     // only
     // Get content
-    char const* pr = strstr(resp, "\r\n\r\n");
-    if (NULL == pr) {
-        rtsp_err("Parse SDP cannot find content.\n");
-        return -1;
+    string s_resp = resp;
+    size_t pos = s_resp.find("trackID=");
+    if (pos != string::npos )
+    {
+        size_t pos2 = s_resp.find_first_of("\r\n",pos);
+        string track =  string(_url)+"/"+s_resp.substr(pos,pos2-pos);
+        memcpy(control,track.c_str(),track.length());
+        //printf("track=%s\n",track.c_str());
     }
-    // SDP begining
-    pr += 4;
-    do {
-        if ('\0' == *pr) break;
-        // Concerned started with "a=" only
-        if (*pr != 'a' || *(pr+1) != '=') {
-            // Next line
-            goto next_line;
-        }
-        // Skip "a="
-        pr += 2;
-        if (0 == strncmp(pr, SDP_XDIM, sizeof(SDP_XDIM)-1)) {
-            pr += (sizeof(SDP_XDIM)-1);
-            // Parse video dimensions
-            // Width
-            // Skip blank or '\t'
-            while (' ' == *pr || '\t' == *pr) pr++;
-            video_width = 0;
-            while (*pr >= '0' && *pr <= '9') {
-                video_width *= 10;
-                video_width += *pr - '0';
-                pr++;
-            }
-            // Height
-            pr++; // Skip ","
-            // Skip blank or '\t'
-            while (' ' == *pr || '\t' == *pr) pr++;
-            video_height = 0;
-            while (*pr >= '0' && *pr <= '9') {
-                video_height *= 10;
-                video_height += *pr - '0';
-                pr++;
-            }
-        }
-        else if (0 == strncmp(pr, SDP_CONTROL, sizeof(SDP_CONTROL)-1)) {
-            pr += (sizeof(SDP_CONTROL)-1);
-            // Parse control
-            // Skip blank or '\t'
-            static bool haveFlag = false;
-            static int w=0;
-            if (strncmp(pr,"track",strlen("track"))==0)
-            {
-                if (haveFlag == false)
-                {
-                    while (' ' == *pr || '\t' == *pr) pr++;
-                    while (*pr != '\0' && *pr != '\r' && *pr != '\n')
-                        control[w++] = *pr++;
-                    control[w] = '\0';
-                }
-                haveFlag = true;
-            }
-            else
-            {
-                while (' ' == *pr || '\t' == *pr) pr++;
-                while (*pr != '\0' && *pr != '\r' && *pr != '\n')
-                    control[w++] = *pr++;
-                control[w] = '\0';
-            }
-        }
-
-next_line:
-        while (*pr != '\0' && *pr != '\r' && *pr != '\n') pr++;
-        if ('\r' == *pr)
-            pr += 2;
-        else if ('\n' == *pr)
-            pr++;
-    } while (1);
 
     return 0;
 }

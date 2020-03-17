@@ -80,9 +80,9 @@ int main()
     //unsigned long long int ldt = current_ms();
     //unsigned long long int count = 0, miss = 0;
     // Initialise RTSP client
-    //rtsp://admin:stfz2430@192.168.1.189:554/h264/main/av_stream
-    //rtsp://192.168.1.88:554/Onvif/live/1/1
-    if (RtspProtocolUtil_init("rtsp://admin:stfz2430@192.168.1.189:554/h264/main/av_stream")) {
+    string rtsp1 = "rtsp://admin:stfz2430@192.168.1.189:554/h264/main/av_stream";
+    string rtsp2 = "rtsp://192.168.1.88:554/Onvif/live/1/1";
+    if (RtspProtocolUtil_init(rtsp1)) {
         fprintf(stderr, "RTSP initialise error.\n");
         exit(-1);
     }

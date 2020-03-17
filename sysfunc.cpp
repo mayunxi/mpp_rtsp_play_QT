@@ -1,5 +1,14 @@
 #include "sysfunc.h"
 #include "MD5.hpp"
+/**
+ * @brief split copy the str beyond start and end to dest
+ * @param src
+ * @param dest
+ * @param start
+ * @param end
+ * @param maxLen
+ * @return
+ */
 int split(const string &src,char *dest,string start,string end,int maxLen)
 {
     size_t pos = src.find(start);
@@ -14,7 +23,6 @@ int split(const string &src,char *dest,string start,string end,int maxLen)
     memcpy(dest,tmp.c_str(),tmp.length());
     return 0;
 }
-
 /***********************************************************************************************
 * 函数名   ：			MakeMd5DigestResp
 * 函数功能 ：			数字摘要认证
@@ -27,7 +35,6 @@ int split(const string &src,char *dest,string start,string end,int maxLen)
 * 输出参数 ：			无
 * 返回值   ：			用于进行数字摘要鉴权的信息
 ***********************************************************************************************/
-#define MD5_BUF_SIZE 64
 string MakeMd5DigestResp(string realm, string cmd, string uri, string nonce, string username, string password)
 {
     string tmp("");
