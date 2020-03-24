@@ -61,18 +61,24 @@ void rtsp_dump(uint8_t* data, int sz)
 #define RTSP_USERAGENT      "User-Agent: Darkise rtsp player 1.0\r\n"
 
 // Command handler
-char _url[256];
-char host[64];
-int port = RTSP_DEFAULT_PORT;
-char usr[64];
-char passwd[64];
-char realm[64];
-char nonce[64];
-AuthType auth_type = UNK;
-int rtspSocket = -1;
+typedef struct {
+    char _url[256];
+    char host[64];
+    int port = RTSP_DEFAULT_PORT;
+    char usr[64];
+    char passwd[64];
+    char realm[64];
+    char nonce[64];
+    AuthType auth_type = UNK;
+    int rtspSocket = -1;
+    char control[256];
+}RTSP_INFO;
+
+RTSP_INFO rtspInfo;
+
 int rtspTimeout = RTSP_TIMEOUT;
 // RTSP control sequeue number
-int CSeq=2;
+int CSeq=1;
 // Use only UDP protocol
 int clientPort[2] = { 37477, 37478 };
 int serverPort[2];
@@ -87,7 +93,7 @@ char sessionId[32];
  * Concerned only
  */
 int video_width, video_height;
-char control[256];
+
 
 int rtp_size = 16*1024*1024;
 uint8_t* rtp_content; // Buffer for rtp
@@ -116,6 +122,11 @@ int RtspProtocolUtil_init(const string url)
 {
 #define RTSP_URL_PREFIX "rtsp://"
 
+    memset(&rtspInfo,0,sizeof(RTSP_INFO));
+    rtspInfo.auth_type = UNK;
+    rtspInfo.port=RTSP_DEFAULT_PORT;
+    rtspInfo.rtspSocket = -1;
+
     size_t pos = 0;
     // Parse URL, get configuration
     // the url MUST start with "rtsp://"
@@ -133,16 +144,16 @@ int RtspProtocolUtil_init(const string url)
     {
         tmp_url = url.substr(a+1);
         string tmp = "rtsp://"  + tmp_url;
-        memcpy(_url,tmp.c_str(),tmp.length());
+        memcpy(rtspInfo._url,tmp.c_str(),tmp.length());
 
         //user passwd
         string usr_info = url.substr(7,a-7);
         pos = usr_info.find(":");
         string tmp_usr = usr_info.substr(0,pos);
         string tmp_passwd = usr_info.substr(pos+1);
-        memcpy(usr,tmp_usr.c_str(),tmp_usr.length());
-        memcpy(passwd,tmp_passwd.c_str(),tmp_passwd.length());
-        printf("usr:%s,passwd:%s\n",usr,passwd);
+        memcpy(rtspInfo.usr,tmp_usr.c_str(),tmp_usr.length());
+        memcpy(rtspInfo.passwd,tmp_passwd.c_str(),tmp_passwd.length());
+        printf("usr:%s,passwd:%s\n",rtspInfo.usr,rtspInfo.passwd);
         //ip
         pos = url.find_first_of("/",a);
         ip = url.substr(a+1,pos-a-1);
@@ -150,7 +161,7 @@ int RtspProtocolUtil_init(const string url)
     }
     else
     {
-        memcpy(_url,url.c_str(),url.length());
+        memcpy(rtspInfo._url,url.c_str(),url.length());
 
         //ip
         size_t b = url.find_first_of('/',7);
@@ -163,13 +174,13 @@ int RtspProtocolUtil_init(const string url)
     {
         string shost = ip.substr(0,pos);
         string sport = ip.substr(pos+1);
-        memcpy(host,shost.c_str(),shost.length());
-        port = std::stoi(sport);
+        memcpy(rtspInfo.host,shost.c_str(),shost.length());
+        rtspInfo.port = std::stoi(sport);
     }
     else
     {
-         memcpy(host,ip.c_str(),ip.length());
-         port = RTSP_DEFAULT_PORT;
+         memcpy(rtspInfo.host,ip.c_str(),ip.length());
+         rtspInfo.port = RTSP_DEFAULT_PORT;
     }
 
 
@@ -181,53 +192,55 @@ static int rtsp_init()
     struct hostent *hp;
     struct sockaddr_in server;
     // Rtp content buffer
+    CSeq=1;
     rtp_content = (uint8_t*)malloc(rtp_size);
 
     // Get server IP
-    hp = gethostbyname(host);
+    hp = gethostbyname(rtspInfo.host);
     if (NULL == hp) {
-        rtsp_err("gethostbyname(%s) error.\n", host);
+        rtsp_err("gethostbyname(%s) error.\n", rtspInfo.host);
         return -1;
     }
     // Connect to Server
-    rtspSocket = socket(AF_INET, SOCK_STREAM, 0);
-    if (rtspSocket < 0) {
+    rtspInfo.rtspSocket = socket(AF_INET, SOCK_STREAM, 0);
+    if (rtspInfo.rtspSocket < 0) {
         rtsp_err("Create socket failed.\n");
         return -1;
     }
     memset(&server, 0, sizeof(struct sockaddr_in));
     memcpy(&(server.sin_addr), hp->h_addr, hp->h_length);
     server.sin_family = AF_INET;
-    server.sin_port = htons((uint16_t)(port));
-    if (connect(rtspSocket, (struct sockaddr*)&server, sizeof(struct sockaddr_in)) != 0) {
+    server.sin_port = htons((uint16_t)(rtspInfo.port));
+    if (connect(rtspInfo.rtspSocket, (struct sockaddr*)&server, sizeof(struct sockaddr_in)) != 0) {
         rtsp_err("Connect to server [%x:%d] error.\n", server.sin_addr.s_addr, server.sin_port);
-        close(rtspSocket);
-        rtspSocket = -1;
+        close(rtspInfo.rtspSocket);
+        rtspInfo.rtspSocket = -1;
         return -1;
     }
 
     /// Set socket to non-blocking
     rtsp_log("Set non-blocking socket.\n");
     int on = 1;
-    int rc = ioctl(rtspSocket, FIONBIO, (char *)&on);
+    int rc = ioctl(rtspInfo.rtspSocket, FIONBIO, (char *)&on);
     if (rc < 0) {
-        close(rtspSocket);
-        rtspSocket = -1;
+        close(rtspInfo.rtspSocket);
+        rtspInfo.rtspSocket = -1;
         return -1;
     }
 
     /** RTSP控制协议初始化 */
     // OPTIONS
     if (options(rtspTimeout)) {
-        close(rtspSocket);
-        rtspSocket = -1;
+        close(rtspInfo.rtspSocket);
+        rtspInfo.rtspSocket = -1;
         return -1;
     }
     // DESCRIBE
+    rtspInfo.auth_type = UNK;
     int res = describe(rtspTimeout);
     if (res < 0) {                   //if error
-        close(rtspSocket);
-        rtspSocket = -1;
+        close(rtspInfo.rtspSocket);
+        rtspInfo.rtspSocket = -1;
         return -1;
     }
     else if (res!=NO)  //need Authenticate
@@ -235,21 +248,21 @@ static int rtsp_init()
          res = describe(rtspTimeout);
     }
     if (res < 0) {                   //if error
-        close(rtspSocket);
-        rtspSocket = -1;
+        close(rtspInfo.rtspSocket);
+        rtspInfo.rtspSocket = -1;
         return -1;
     }
     // SETUP
     if (setup(rtspTimeout)) {
         printf("setup time out\n");
-        close(rtspSocket);
-        rtspSocket = -1;
+        close(rtspInfo.rtspSocket);
+        rtspInfo.rtspSocket = -1;
         return -1;
     }
     // PLAY
     if (play(rtspTimeout)) {
-        close(rtspSocket);
-        rtspSocket = -1;
+        close(rtspInfo.rtspSocket);
+        rtspInfo.rtspSocket = -1;
         return -1;
     }
 
@@ -260,16 +273,16 @@ static int rtsp_init()
 int isStart()
 {
     // 检查环境是否准备就绪
-    if (rtspSocket >= 0 && CSeq > 4) {
+    if (rtspInfo.rtspSocket >= 0 && CSeq > 4) {
         return 1; 
     }
-    if (rtspSocket >= 0) {
-        close(rtspSocket);
-        rtspSocket = -1;
+    if (rtspInfo.rtspSocket >= 0) {
+        close(rtspInfo.rtspSocket);
+        rtspInfo.rtspSocket = -1;
     }
     rtsp_init();
     ///socket RTSP play已完成
-    if (rtspSocket < 0 || CSeq <= 4)
+    if (rtspInfo.rtspSocket < 0 || CSeq <= 4)
         return 0;
     // Normal
     return 1;
@@ -282,12 +295,12 @@ int rtsp_read()
 {
     static uint8_t buff[2048];
     // socket 有数据吗？
-    int rcvs = recv(rtspSocket, buff, sizeof(buff), 0);
+    int rcvs = recv(rtspInfo.rtspSocket, buff, sizeof(buff), 0);
     if (rcvs < 0) {
         if (errno != EAGAIN) {
         // ERROR
-        close(rtspSocket);
-        rtspSocket = -1;
+        close(rtspInfo.rtspSocket);
+        rtspInfo.rtspSocket = -1;
         }
     }
     else if (rcvs > 0) {
@@ -389,8 +402,8 @@ static int options(int ms)
      */
 #define OPTIONS_CMD "OPTIONS %s " RTSP_VERSIION "\r\nCSeq: %d\r\n" RTSP_USERAGENT "\r\n"
     char cmd[1024];
-    int size = snprintf(cmd, sizeof(cmd), OPTIONS_CMD, _url, CSeq);
-    printf("requst:%s\n",cmd);
+    int size = snprintf(cmd, sizeof(cmd), OPTIONS_CMD, rtspInfo._url, CSeq);
+    printf("OPTIONS requst:%s\n",cmd);
     _send_request(cmd, size);
     // Waiting for response
     char resp[2048];
@@ -398,7 +411,7 @@ static int options(int ms)
         return -1;
     }
     // Parse response
-    printf("response:%s\n",resp);
+    printf("OPTIONS response:%s\n",resp);
     CSeq++;
     return 0;
 }
@@ -415,31 +428,31 @@ int describe(int ms)
     char cmd[1024];
     memset(cmd,0,1024);
     int size;
-    if (auth_type == UNK)
+    if (rtspInfo.auth_type == UNK)
     {
-        size = snprintf(cmd, sizeof(cmd), DESCRIBE_CMD, _url, CSeq);
+        size = snprintf(cmd, sizeof(cmd), DESCRIBE_CMD, rtspInfo._url, CSeq);
     }
-    else if (auth_type == Basic)
+    else if (rtspInfo.auth_type == Basic)
     {
 
     }
-    else if (auth_type == Digest)
+    else if (rtspInfo.auth_type == Digest)
     {
         //a correct response -->>> Authorization: Digest username="admin", realm="IP Camera(C2358)", nonce="e660f15fe14cf92fb106179f67140d24", uri="rtsp://192.168.1.189:554/h264/main/av_stream", response="c2f4ed744e7f8d31d37420bf3efeb808"\r\n
-        string s_respone = MakeMd5DigestResp(realm,"DESCRIBE",_url,nonce,usr,passwd);
+        string s_respone = MakeMd5DigestResp(rtspInfo.realm,"DESCRIBE",rtspInfo._url,rtspInfo.nonce,rtspInfo.usr,rtspInfo.passwd);
         int len = s_respone.length();
-        string s_cmd = "DESCRIBE "+string(_url)+" "+RTSP_VERSIION+"\r\n""CSeq: "+to_string(CSeq)+"\r\n"+"Authorization:Digest username=\""+usr
-                +"\",realm=\""+realm
-                +"\",nonce=\""+nonce
-                +"\",uri=\""+_url+"\","
+        string s_cmd = "DESCRIBE "+string(rtspInfo._url)+" "+RTSP_VERSIION+"\r\n""CSeq: "+to_string(CSeq)+"\r\n"+"Authorization:Digest username=\""+rtspInfo.usr
+                +"\",realm=\""+rtspInfo.realm
+                +"\",nonce=\""+rtspInfo.nonce
+                +"\",uri=\""+rtspInfo._url+"\","
                 +"response=\""+s_respone+"\"\n"
                 +RTSP_USERAGENT+"Accept:application/sdp\r\n\r\n";
         memcpy(cmd,s_cmd.c_str(),s_cmd.length());
         size=s_cmd.length();
-        printf("Digest author requst cmd len:%d\n",s_cmd.length());
+        //printf("Digest author requst cmd len:%d\n",s_cmd.length());
     }
     // Send command the RTSP server
-    printf("requst:%s\n",cmd);
+    printf("describe requst:%s\n",cmd);
     _send_request(cmd, size);  //tips:size must
     // Waiting for response
     char resp[2048];
@@ -451,16 +464,16 @@ int describe(int ms)
         {
             if (pos = s_resp.find("WWW-Authenticate:Digest") >=0 )
             {
-                split(s_resp,realm,"realm=",",",64);
-                split(s_resp,nonce,"nonce=",",",64);
+                split(s_resp,rtspInfo.realm,"realm=",",",64);
+                split(s_resp,rtspInfo.nonce,"nonce=",",",64);
                 //memcpy(nonce,"e660f15fe14cf92fb106179f67140d24",strlen("e660f15fe14cf92fb106179f67140d24"));
-                auth_type = Digest;
+                rtspInfo.auth_type = Digest;
 
             }
             else if (pos = s_resp.find("WWW-Authenticate:Basic") >=0 )
             {
-                split(s_resp,realm,"realm=",",",64);
-                auth_type = Basic;
+                split(s_resp,rtspInfo.realm,"realm=",",",64);
+                rtspInfo.auth_type = Basic;
             }
             else
             {
@@ -473,16 +486,16 @@ int describe(int ms)
     {
         string s_resp = resp;
         if ( s_resp.find("RTSP/1.0 200") >=0)
-            auth_type = NO;
+            rtspInfo.auth_type = NO;
     }
-    printf("response:%s\n",resp);
+    printf("describe response:%s\n",resp);
     // Parse response
 
     _parse_sdp(resp);
 
     CSeq++;
 
-    return auth_type;
+    return rtspInfo.auth_type;
 }
 
 static int setup(int ms)
@@ -501,7 +514,7 @@ static int play(int ms)
      */
 #define PLAY_CMD "PLAY %s " RTSP_VERSIION "\r\nCSeq: %d\r\n" RTSP_USERAGENT "Session: %s\r\nRange: npt=0-\r\n\r\n"
     char cmd[1024];
-    int size = snprintf(cmd, sizeof(cmd), PLAY_CMD, _url, CSeq, sessionId);
+    int size = snprintf(cmd, sizeof(cmd), PLAY_CMD, rtspInfo._url, CSeq, sessionId);
     _send_request(cmd, size);
 
     // Waiting for response
@@ -526,7 +539,7 @@ static int get_params(int ms)
 
 #define GET_PARAMETER_CMD "GET_PARAMETER %s " RTSP_VERSIION "\r\nCSeq: %d\r\n" RTSP_USERAGENT "Session: %s\r\n\r\n"
     char cmd[1024];
-    int size = snprintf(cmd, sizeof(cmd), GET_PARAMETER_CMD, _url, CSeq, sessionId);
+    int size = snprintf(cmd, sizeof(cmd), GET_PARAMETER_CMD, rtspInfo._url, CSeq, sessionId);
     _send_request(cmd, size);
 
     // Waiting for response
@@ -550,7 +563,7 @@ static int teardown(int ms)
      */
 #define TEARDOWN_CMD "TEARDOWN %s " RTSP_VERSIION "\r\nCSeq: %d\r\n" RTSP_USERAGENT "Session: %s\r\n\r\n"
     char cmd[1024];
-    int size = snprintf(cmd, sizeof(cmd), TEARDOWN_CMD, _url, CSeq, sessionId);
+    int size = snprintf(cmd, sizeof(cmd), TEARDOWN_CMD, rtspInfo._url, CSeq, sessionId);
     _send_request(cmd, size);
 
     // Waiting for response
@@ -574,7 +587,7 @@ static int _setup_interleaved(int ms)
      */
 #define SETUPI_CMD_I "SETUP %s " RTSP_VERSIION "\r\nCSeq: %d\r\n" RTSP_USERAGENT "Transport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n\r\n"
     char cmd[1024];
-    int size = snprintf(cmd, sizeof(cmd), SETUPI_CMD_I, control, CSeq);
+    int size = snprintf(cmd, sizeof(cmd), SETUPI_CMD_I, rtspInfo.control, CSeq);
     _send_request(cmd, size);
     printf("setup requset:%s\n",cmd);
     // Waiting for response
@@ -600,7 +613,7 @@ static int _set_range(int ms)
      */
 #define SETUP_CMD_R "SETUP %s " RTSP_VERSIION "\r\nCSeq: %d\r\n" RTSP_USERAGENT "Transport: RTP/AVP;unicast;client_port=%d-%d\r\n\r\n"
     char cmd[1024];
-    int size = snprintf(cmd, sizeof(cmd), SETUP_CMD_R, control, CSeq, clientPort[0], clientPort[1]);
+    int size = snprintf(cmd, sizeof(cmd), SETUP_CMD_R, rtspInfo.control, CSeq, clientPort[0], clientPort[1]);
     _send_request(cmd, size);
 
     // Waiting for response
@@ -624,13 +637,13 @@ static int _send_request(char const* req, int size)
 {
     rtsp_log("send request. %.*s\n", size, req);
     ssize_t snd = 0;
-    if (rtspSocket < 0) {
+    if (rtspInfo.rtspSocket < 0) {
         rtsp_err("Connection to server has not been set up.\n");
         return -1;
     }
     ssize_t s;
     do {
-        s = send(rtspSocket, req + snd, size - snd, 0);
+        s = send(rtspInfo.rtspSocket, req + snd, size - snd, 0);
         if (s <= 0) {
             rtsp_err("Send request error. %s.\n", strerror(errno));
             return -1;
@@ -646,12 +659,12 @@ static int _wait_response(int ms, char* resp, size_t size)
     int rc = 0;
     struct pollfd fds;
     //int poll(struct pollfd *fds, nfds_t nfds, int timeout);
-    if (rtspSocket < 0) {
+    if (rtspInfo.rtspSocket < 0) {
         rtsp_err("Connection to server has not been set up.\n");
         return -1;
     }
     memset(&fds, 0, sizeof(fds));
-    fds.fd = rtspSocket;
+    fds.fd = rtspInfo.rtspSocket;
     fds.events = POLLIN;
 
     rc = poll(&fds, 1, ms);
@@ -664,7 +677,7 @@ static int _wait_response(int ms, char* resp, size_t size)
     }
 
     // Receiving
-    int rcvs = recv(rtspSocket, resp, size, 0);
+    int rcvs = recv(rtspInfo.rtspSocket, resp, size, 0);
     rtsp_log("Response[%.*s].\n", rcvs, resp);
     // Is response ok?
     /// checking "RTSP/1.0 200 OK \r\n"
@@ -712,8 +725,8 @@ static int _parse_sdp(char const* resp)
     if (pos != string::npos )
     {
         size_t pos2 = s_resp.find_first_of("\r\n",pos);
-        string track =  string(_url)+"/"+s_resp.substr(pos,pos2-pos);
-        memcpy(control,track.c_str(),track.length());
+        string track =  string(rtspInfo._url)+"/"+s_resp.substr(pos,pos2-pos);
+        memcpy(rtspInfo.control,track.c_str(),track.length());
         //printf("track=%s\n",track.c_str());
     }
 

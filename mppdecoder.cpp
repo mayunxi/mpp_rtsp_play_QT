@@ -14,6 +14,8 @@
 #include <opencv2/core/core.hpp>
 #include <opencv2/objdetect/objdetect.hpp>
 #include <string>
+#include <stdexcept>
+#include <iostream>
 
 using namespace std;
 using namespace cv;
@@ -336,24 +338,28 @@ void frame_out(RK_U64 ms)
     RK_U32 h = mpp_frame_get_height(frame);
     RK_U32 w = mpp_frame_get_width(frame);
     uint8_t *base = (uint8_t *)mpp_buffer_get_ptr(buff);
-    printf("size:%d,base:%d\n",size,base);
-//    if (base != NULL)
-//    {
-//        int bufLen = (w*h*3)/2; // yuv420 = rgb / 2
-//        static int frame_count = 0;
-//        frame_count++;
+    //printf("size:%d,base:%d\n",size,base);
+    if (base != NULL)
+    {
+        int bufLen = (w*h*3)/2; // yuv420 = rgb / 2
+        static int frame_count = 0;
+        frame_count++;
 
-//        cv::Mat yuvImg;
-//        yuvImg.create(h*3/2, w, CV_8UC1);  //
-//        yuvImg.data = base;
-//        //memcpy(yuvImg.data, base,bufLen*sizeof(unsigned char));
-//        cv::Mat rgbImg;
-//        cv::cvtColor(yuvImg, rgbImg, CV_YUV420sp2RGB);
+        cv::Mat yuvImg;
+        yuvImg.create(h*3/2, w, CV_8UC1);  //
+        yuvImg.data = base;
+        cv::Mat rgbImg;
+        cv::cvtColor(yuvImg, rgbImg, CV_YUV420sp2RGB);
+        if (rgbImg.empty())
+        {
+            printf("rgbImg empty\n");
+        }
+        std::string fileName="img/"+std::to_string(frame_count)+".jpg";
+        printf("save pic:%d\n",frame_count);
+        //bool ret  = cv::imwrite(fileName,rgbImg);
 
-//        std::string fileName="img/"+std::to_string(frame_count)+".jpg";
-//        printf("save pic:%d\n",frame_count);
-//        cv::imwrite(fileName,rgbImg);
-//    }
+
+    }
     //rkdrm_display(frame);
     mpp_log("picture of count: %u\n", mpp_frame_get_poc(frame));
 #endif

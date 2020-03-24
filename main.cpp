@@ -63,6 +63,7 @@ static void *
         }
         // 尝试从socket获取数据
         rtsp_read();
+        //printf("rtsp_read\n");
         // 获取RTSP中的H264数据
         if (rtsp_packet() > 0) {
             // 解码
@@ -80,6 +81,8 @@ int main()
     //unsigned long long int ldt = current_ms();
     //unsigned long long int count = 0, miss = 0;
     // Initialise RTSP client
+
+    setbuf(stdout,NULL); //or use:setvbuf(stdout,0,_IONBF,0);printf to debug window
     string rtsp1 = "rtsp://admin:stfz2430@192.168.1.189:554/h264/main/av_stream";
     string rtsp2 = "rtsp://192.168.1.88:554/Onvif/live/1/1";
     if (RtspProtocolUtil_init(rtsp1)) {
