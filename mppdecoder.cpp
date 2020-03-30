@@ -16,6 +16,7 @@
 #include <string>
 #include <stdexcept>
 #include <iostream>
+#include <time.h>
 
 using namespace std;
 using namespace cv;
@@ -342,22 +343,32 @@ void frame_out(RK_U64 ms)
     if (base != NULL)
     {
         int bufLen = (w*h*3)/2; // yuv420 = rgb / 2
-        static int frame_count = 0;
-        frame_count++;
 
+        timeval start,end;
         cv::Mat yuvImg;
         yuvImg.create(h*3/2, w, CV_8UC1);  //
         yuvImg.data = base;
         cv::Mat rgbImg;
+
+        gettimeofday(&start,NULL);
         cv::cvtColor(yuvImg, rgbImg, CV_YUV420sp2RGB);
+        gettimeofday(&end,NULL);
+        float use_time = 1000*(end.tv_sec - start.tv_sec) + (end.tv_usec - start.tv_usec)/1000;
+        printf("cvtClolor use time:%f\n",use_time);
         if (rgbImg.empty())
         {
             printf("rgbImg empty\n");
         }
+        static int frame_count = 0;
+        frame_count++;
         std::string fileName="img/"+std::to_string(frame_count)+".jpg";
-        printf("save pic:%d\n",frame_count);
+       // printf("save pic:%d\n",frame_count);
         //bool ret  = cv::imwrite(fileName,rgbImg);
-
+        static timeval last,now;
+        gettimeofday(&now,NULL);
+        float t = 1000*(now.tv_sec - last.tv_sec) + (now.tv_usec - last.tv_usec)/1000;
+        printf("save pic:%d,%f\n",frame_count,t);
+        last = now;
 
     }
     //rkdrm_display(frame);
